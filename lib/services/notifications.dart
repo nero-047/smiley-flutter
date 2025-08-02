@@ -7,121 +7,90 @@ import 'package:timezone/data/latest.dart' as tzData;
 import 'package:flutter_timezone/flutter_timezone.dart';
 
 class NotificationService {
-  final notificationPlugin = FlutterLocalNotificationsPlugin();
-
+  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
-  bool get isInitialized => _isInitialized;
 
-  // Initialize the notification service
   Future<void> initialize() async {
-    if (_isInitialized) return; //prevent re-initialization
+    if (_isInitialized) return;
 
-    // Initialize timezone data
     tzData.initializeTimeZones();
-    final currentTimeZone = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(currentTimeZone)); // Set your timezone
+    final String timeZoneName = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(timeZoneName));
 
-    // Android and iOS initialization settings
-    const initializationSettingsAndroid = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
-    );
-    const initializationSettingsIOS = DarwinInitializationSettings(
+    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const iosInit = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
     );
+    const initSettings = InitializationSettings(android: androidInit, iOS: iosInit);
 
-    // init settings
-    const initializationSettings = InitializationSettings(
-      android: initializationSettingsAndroid,
-      iOS: initializationSettingsIOS,
-    );
-
-    // Initialize the plugin
-    await notificationPlugin.initialize(
-      initializationSettings,
+    await _plugin.initialize(initSettings,
       onDidReceiveNotificationResponse: (response) {
-        // Handle notification response
-        print('Notification clicked: ${response.payload}');
+        debugPrint("Notification tapped: ${response.payload}");
       },
     );
 
-    // Request permissions
-    await _handlePermissions();
-
+    await _createNotificationChannel();
+    await _requestPermissions();
     _isInitialized = true;
   }
 
-  // Notification Details Setup
-  NotificationDetails notificationDetails() {
+  Future<void> _createNotificationChannel() async {
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'daily_smile_channel',
+      'Daily Smile Notifications',
+      description: 'Notifications to make you smile daily 😄',
+      importance: Importance.max,
+    );
+
+    final androidPlugin = _plugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+
+    await androidPlugin?.createNotificationChannel(channel);
+  }
+
+  NotificationDetails _details() {
     return const NotificationDetails(
       android: AndroidNotificationDetails(
-        "daily_smile_channel",
-        "Daily Smile Notifications",
-        channelDescription: "Daily Smile Notifications",
+        'daily_smile_channel',
+        'Daily Smile Notifications',
+        channelDescription: 'Notifications to make you smile daily 😄',
         importance: Importance.max,
         priority: Priority.high,
+        playSound: true,
       ),
       iOS: DarwinNotificationDetails(),
     );
   }
 
-  // Show Notification
   Future<void> showNotification({
     required String title,
     required String body,
     String? payload,
   }) async {
-    if (!_isInitialized) {
-      await initialize();
-      _isInitialized = true;
-    }
+    if (!_isInitialized) await initialize();
 
-    await notificationPlugin.show(
+    await _plugin.show(
       DateTime.now().millisecondsSinceEpoch ~/ 1000,
       title,
       body,
-      notificationDetails(),
+      _details(),
       payload: payload,
     );
   }
 
-  // Notification Permission Check
-  Future<void> _handlePermissions() async {
-    if (Platform.isAndroid) {
-      // Android 13+ Notification Permission
-      if (await Permission.notification.isDenied ||
-          await Permission.notification.isPermanentlyDenied) {
-        final status = await Permission.notification.request();
-
-        if (!status.isGranted) {
-          debugPrint("Notifications permission denied");
-          // Optionally alert the user or guide them to settings
-        }
-      }
-    }
-
-    if (Platform.isIOS) {
-      await notificationPlugin
-          .resolvePlatformSpecificImplementation<
-            IOSFlutterLocalNotificationsPlugin
-          >()
-          ?.requestPermissions(alert: true, badge: true, sound: true);
-    }
-  }
-
-  // Schedule Notification
-  Future<void> scheduleotification({
+  Future<void> scheduleNotification({
     required int id,
     required String title,
     required String body,
     required int hour,
     required int minute,
   }) async {
-    // Get Current Timezone
-    final now = tz.TZDateTime.now(tz.local);
+    if (!_isInitialized) await initialize();
 
-    final scheduledTime = tz.TZDateTime(
+    final now = tz.TZDateTime.now(tz.local);
+    var scheduled = tz.TZDateTime(
       tz.local,
       now.year,
       now.month,
@@ -130,30 +99,54 @@ class NotificationService {
       minute,
     );
 
-    await notificationPlugin.zonedSchedule(
+    if (scheduled.isBefore(now)) {
+      scheduled = scheduled.add(const Duration(days: 1)); // schedule for next day
+    }
+
+    await _plugin.zonedSchedule(
       id,
       title,
       body,
-      scheduledTime,
-      notificationDetails(),
+      scheduled,
+      _details(),
       androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-
-      // Ensure the notification is shown at the exact time daily
       matchDateTimeComponents: DateTimeComponents.time,
     );
-    print("notification scheduled at: $scheduledTime");
+
+    debugPrint("✅ Scheduled [$id] at $scheduled");
   }
 
-  // Cancel Notification
+  Future<void> _requestPermissions() async {
+    if (Platform.isAndroid) {
+      final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
+
+      // Android 13+ notification permission
+      final notifStatus = await Permission.notification.status;
+      if (!notifStatus.isGranted) await Permission.notification.request();
+
+      // Android 12+ exact alarm permission
+      final exactAlarmStatus = await Permission.scheduleExactAlarm.status;
+      if (!exactAlarmStatus.isGranted) await Permission.scheduleExactAlarm.request();
+    }
+
+    if (Platform.isIOS) {
+      await _plugin
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+    }
+  }
+
   Future<void> cancelAllNotifications() async {
-    await notificationPlugin.cancelAll();
+    await _plugin.cancelAll();
+    debugPrint("🔕 All notifications cancelled");
   }
 
-  // Log Scheduled Notifications
   Future<void> logScheduledNotifications() async {
-    final pending = await notificationPlugin.pendingNotificationRequests();
+    final pending = await _plugin.pendingNotificationRequests();
+    debugPrint("📅 Scheduled notifications:");
     for (final n in pending) {
-      print('Pending Notification: ID=${n.id}, Title=${n.title}');
+      debugPrint("• ID=${n.id}, Title=${n.title}");
     }
   }
 }

@@ -56,8 +56,21 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _scheduleNotifications() async {
-    final start = DateTime(0, 0, 0, _startTime.hour, _startTime.minute);
-    final end = DateTime(0, 0, 0, _endTime.hour, _endTime.minute);
+    final now = DateTime.now();
+    final start = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      _startTime.hour,
+      _startTime.minute,
+    );
+    final end = DateTime(
+      now.year,
+      now.month,
+      now.day,
+      _endTime.hour,
+      _endTime.minute,
+    );
 
     final totalMinutes = end.difference(start).inMinutes;
 
@@ -72,7 +85,7 @@ class _HomePageState extends State<HomePage> {
       final minutesFromStart = interval * i;
       final notifyTime = start.add(Duration(minutes: minutesFromStart));
 
-      await NotificationService().scheduleotification(
+      await NotificationService().scheduleNotification(
         id: i,
         hour: notifyTime.hour,
         minute: notifyTime.minute,
